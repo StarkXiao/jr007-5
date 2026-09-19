@@ -67,9 +67,37 @@ export const NOTIFICATION_TYPES = {
   comment_hidden: "评论被隐藏",
   report_result: "举报处理结果",
   spot_stale: "条目信息可能已过期",
+  notification_digest: "静默时段通知摘要",
 } as const;
 
 export type NotificationType = keyof typeof NOTIFICATION_TYPES;
+
+/**
+ * 通知重要程度。决定走哪几条通道、静默时段内是立即触达还是延后：
+ * - high：申诉结果、驳回、评论被隐藏等有时效的处置结果 → 三通道，静默期也立即发；
+ * - normal：通过、要求修改、回复、举报结果等常规反馈 → 三通道，静默期延后到静默结束；
+ * - low：过期提醒等非紧急运营触达 → 静默期聚合为一条摘要，绝不单独打扰。
+ */
+export const NOTIFICATION_LEVELS = {
+  high: "重要",
+  normal: "普通",
+  low: "提醒",
+} as const;
+
+export type NotificationLevel = keyof typeof NOTIFICATION_LEVELS;
+
+export const NOTIFICATION_LEVEL_BY_TYPE: Record<NotificationType, NotificationLevel> = {
+  review_rejected: "high",
+  appeal_result: "high",
+  comment_hidden: "high",
+  review_approved: "normal",
+  review_changes: "normal",
+  comment_reply: "normal",
+  report_result: "normal",
+  // SLA 超时提醒管理员属于告警，复用 report_result 类型，按 high 处理由调用方覆盖
+  spot_stale: "low",
+  notification_digest: "low",
+};
 
 /**
  * 允许发布到地图的隐私状态。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
@@ -14,16 +14,83 @@ const router = useRouter();
 
 const isMapPage = computed(() => route.name === "map");
 
+let pollTimer: number | undefined;
+
+// 后台标签页也会收到站内信：每 60 秒同步一次未读数，
+// 浏览器推送点击后回到页面时（visibilitychange）再立即刷新
+function startPolling() {
+  stopPolling();
+  pollTimer = window.setInterval(() => {
+    if (auth.isLoggedIn && document.visibilityState === "visible") {
+      void notifications.syncUnread();
+    }
+  }, 60_000);
+}
+
+function stopPolling() {
+  if (pollTimer !== undefined) {
+    window.clearInterval(pollTimer);
+    pollTimer = undefined;
+  }
+}
+
+// 登录/退出发生在 App 挂载之后（例如登录页跳转）时同步轮询状态
+watch(
+  () => auth.isLoggedIn,
+  (loggedIn) => {
+    if (loggedIn) {
+      void notifications.load().catch(() => undefined);
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  },
+);
+
+function onVisible() {
+  if (document.visibilityState === "visible" && auth.isLoggedIn) {
+    void notifications.syncUnread();
+  }
+}
+
+// 点击系统通知后 sw.js 聚焦本标签页并发来目标地址（可能是绝对 URL，需归一化为站内路径）
+function onSwMessage(event: MessageEvent<{ type?: string; url?: string }>) {
+  if (event.data?.type !== "NOTIFICATION_NAVIGATE" || !event.data.url) return;
+  let target = event.data.url;
+  try {
+    const parsed = new URL(target, window.location.origin);
+    if (parsed.origin === window.location.origin) target = parsed.pathname + parsed.search + parsed.hash;
+  } catch {
+    // 已经是相对路径时直接使用
+  }
+  if (target.startsWith("/")) void router.push(target);
+}
+
 onMounted(async () => {
   await catalog.load().catch(() => undefined);
 
   if (auth.isLoggedIn) {
     await notifications.load().catch(() => undefined);
+    startPolling();
+  }
+
+  document.addEventListener("visibilitychange", onVisible);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", onSwMessage);
+  }
+});
+
+onUnmounted(() => {
+  stopPolling();
+  document.removeEventListener("visibilitychange", onVisible);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.removeEventListener("message", onSwMessage);
   }
 });
 
 async function handleLogout() {
   await auth.logout();
+  stopPolling();
   notifications.reset();
   ElMessage.success("已退出登录");
   router.push({ name: "map" });

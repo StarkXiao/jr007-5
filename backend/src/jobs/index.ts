@@ -60,6 +60,7 @@ export async function slaSweep(): Promise<{ overdueTasks: number; overdueReports
       await notify({
         userId: admin.id,
         type: "report_result",
+        level: "high",
         title: "有工单已超过处理时限",
         body: `待处理超时：审核 ${overdueTasks.length} 条，举报 ${overdueReports.length} 条`,
         payload: { overdueTasks: overdueTasks.length, overdueReports: overdueReports.length },

@@ -87,14 +87,36 @@ export interface Comment {
   pendingModeration?: boolean;
 }
 
+export type NotificationLevel = "high" | "normal" | "low";
+
 export interface NotificationItem {
   id: string;
   type: string;
+  level: NotificationLevel;
   title: string;
   body: string | null;
   payload: Record<string, unknown>;
   read: boolean;
+  channels: { email: boolean; webpush: boolean };
   createdAt: string;
+}
+
+export interface UserSettings {
+  defaultFuzzRadius: number;
+  notifyEmail: boolean;
+  notifyInapp: boolean;
+  notifyPush: boolean;
+  quietHoursEnabled: boolean;
+  /** 自午夜起的分钟数，0–1439 */
+  quietStart: number;
+  quietEnd: number;
+  timezone: string;
+  locale: string;
+}
+
+export interface PushVapidKey {
+  enabled: boolean;
+  publicKey: string | null;
 }
 
 export interface CurrentUser {
@@ -107,12 +129,7 @@ export interface CurrentUser {
   email: string | null;
   phone: string | null;
   createdAt: string;
-  settings: {
-    defaultFuzzRadius: number;
-    notifyEmail: boolean;
-    notifyInapp: boolean;
-    locale: string;
-  };
+  settings: UserSettings;
 }
 
 export interface UploadedAsset {

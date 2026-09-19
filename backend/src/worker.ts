@@ -9,6 +9,7 @@ import {
 } from "./services/queue";
 import { processAsset } from "./modules/media/service";
 import { cleanup, purgeOriginalImages, slaSweep, staleSweep } from "./jobs";
+import { flushNotifications } from "./jobs/notifications";
 import { initStorage } from "./services/storage";
 import { disconnectPrisma } from "./db/prisma";
 import { closeRedis, redis } from "./db/redis";
@@ -19,6 +20,8 @@ import { logger } from "./utils/logger";
 // 因此重启 worker 不会产生重复的调度项。
 const SCHEDULES: Array<{ task: SweepJobData["task"]; pattern: string; label: string }> = [
   { task: "sla-sweep", pattern: "*/15 * * * *", label: "每 15 分钟：SLA 超时巡检" },
+  // 静默时段结束后的补发与低级别摘要依赖这个扫描频率，不能放得更疏
+  { task: "notify-flush", pattern: "*/10 * * * *", label: "每 10 分钟：通知延后投递与摘要" },
   { task: "stale-sweep", pattern: "20 3 * * *", label: "每天 03:20：新鲜度巡检" },
   { task: "purge-originals", pattern: "40 3 * * *", label: "每天 03:40：清理超期原图" },
   { task: "cleanup", pattern: "0 4 * * *", label: "每天 04:00：清理过期令牌与通知" },
@@ -28,6 +31,8 @@ async function runSweep(task: SweepJobData["task"]) {
   switch (task) {
     case "sla-sweep":
       return slaSweep();
+    case "notify-flush":
+      return flushNotifications();
     case "stale-sweep":
       return staleSweep();
     case "purge-originals":

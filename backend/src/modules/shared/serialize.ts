@@ -162,19 +162,27 @@ export function serializeComment(comment: CommentLike) {
 export function serializeNotification(notification: {
   id: bigint;
   type: string;
+  level?: string;
   title: string;
   body: string | null;
   payload: unknown;
   readAt: Date | null;
+  emailSent?: boolean;
+  pushSent?: boolean;
   createdAt: Date;
 }) {
   return {
     id: notification.id,
     type: notification.type,
+    level: notification.level ?? "normal",
     title: notification.title,
     body: notification.body,
     payload: notification.payload ?? {},
     read: notification.readAt !== null,
+    channels: {
+      email: notification.emailSent ?? false,
+      webpush: notification.pushSent ?? false,
+    },
     createdAt: notification.createdAt,
   };
 }

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import crypto from "node:crypto";
+import { supportedTimezones } from "../../services/notifications/timezones";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { ok } from "../../utils/serialize";
 import { validate } from "../../middleware/validate";
@@ -10,6 +11,19 @@ import { AppError } from "../../utils/errors";
 import { logger } from "../../utils/logger";
 
 export const usersRouter = Router();
+
+export const settingsBodySchema = z.object({
+  defaultFuzzRadius: z.number().int().min(0).max(500).optional(),
+  notifyEmail: z.boolean().optional(),
+  notifyInapp: z.boolean().optional(),
+  notifyPush: z.boolean().optional(),
+  quietHoursEnabled: z.boolean().optional(),
+  // 静默起止均为用户时区下自午夜起的分钟数，0–1439
+  quietStart: z.number().int().min(0).max(1439).optional(),
+  quietEnd: z.number().int().min(0).max(1439).optional(),
+  timezone: z.enum(supportedTimezones as unknown as [string, ...string[]]).optional(),
+  locale: z.enum(["zh-CN", "en-US"]).optional(),
+});
 
 usersRouter.get(
   "/me/settings",
@@ -22,6 +36,11 @@ usersRouter.get(
           defaultFuzzRadius: 50,
           notifyEmail: true,
           notifyInapp: true,
+          notifyPush: false,
+          quietHoursEnabled: false,
+          quietStart: 1320,
+          quietEnd: 480,
+          timezone: "Asia/Shanghai",
           locale: "zh-CN",
         },
       }),
@@ -32,15 +51,18 @@ usersRouter.get(
 usersRouter.patch(
   "/me/settings",
   requireAuth,
-  validate({
-    body: z.object({
-      defaultFuzzRadius: z.number().int().min(0).max(500).optional(),
-      notifyEmail: z.boolean().optional(),
-      notifyInapp: z.boolean().optional(),
-      locale: z.enum(["zh-CN", "en-US"]).optional(),
-    }),
-  }),
+  validate({ body: settingsBodySchema }),
   asyncHandler(async (req, res) => {
+    // 静默起止相同会导致"全天静默"，重要通知照样发，但普通通知永远延后——必须拒绝
+    if (
+      req.body.quietHoursEnabled &&
+      req.body.quietStart !== undefined &&
+      req.body.quietEnd !== undefined &&
+      req.body.quietStart === req.body.quietEnd
+    ) {
+      throw AppError.badRequest("静默开始与结束时间不能相同");
+    }
+
     const settings = await prisma.userSetting.upsert({
       where: { userId: req.user!.id },
       create: { userId: req.user!.id, ...req.body },

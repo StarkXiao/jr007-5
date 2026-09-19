@@ -36,3 +36,13 @@ app.use(createPinia());
 app.use(router);
 app.use(ElementPlus, { locale: zhCn });
 app.mount("#app");
+
+// 注册推送用 Service Worker（仅注册，不弹权限——权限只能在用户点击设置开关时请求）。
+// 注册失败不影响应用：推送是三条触达通道里的可选增强，站内信与邮件不依赖它。
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((error: unknown) => {
+      console.warn("Service Worker 注册失败", error);
+    });
+  });
+}

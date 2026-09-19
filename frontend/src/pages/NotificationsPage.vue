@@ -2,14 +2,27 @@
 import { onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useNotificationStore } from "@/stores/notifications";
+import type { NotificationLevel } from "@/api/types";
 
 const notifications = useNotificationStore();
 const router = useRouter();
 
+const LEVEL_META: Record<NotificationLevel, { label: string; type: "danger" | "info" | "warning" }> = {
+  high: { label: "重要", type: "danger" },
+  normal: { label: "普通", type: "info" },
+  low: { label: "提醒", type: "warning" },
+};
+
 // 通知点击后跳到对应位置：审核结果去条目页，要求修改去编辑页
 function open(item: (typeof notifications.items)[number]) {
   const spotUuid = item.payload?.spotUuid as string | undefined;
-  if (!spotUuid) return;
+  if (!spotUuid) {
+    if (item.type === "notification_digest") {
+      // 摘要本身没有具体条目，展开通知列表即可
+      return;
+    }
+    return;
+  }
 
   if (item.type === "review_changes" || item.type === "spot_stale") {
     void router.push({ name: "spot-edit", params: { uuid: spotUuid } });
@@ -43,9 +56,18 @@ onMounted(() => void notifications.load());
       >
         <div style="display: flex; justify-content: space-between; gap: 10px">
           <div>
-            <strong>{{ item.title }}</strong>
+            <el-tag size="small" :type="LEVEL_META[item.level as NotificationLevel]?.type ?? 'info'">
+              {{ LEVEL_META[item.level as NotificationLevel]?.label ?? "普通" }}
+            </el-tag>
+            <strong style="margin-left: 8px">{{ item.title }}</strong>
             <el-tag v-if="!item.read" size="small" type="danger" style="margin-left: 8px">未读</el-tag>
             <p style="margin: 6px 0 0; white-space: pre-wrap">{{ item.body }}</p>
+            <p v-if="item.channels.email || item.channels.webpush" class="muted" style="margin: 4px 0 0; font-size: 12px">
+              已同步：
+              <template v-if="item.channels.email">邮件</template>
+              <template v-if="item.channels.email && item.channels.webpush">、</template>
+              <template v-if="item.channels.webpush">浏览器推送</template>
+            </p>
           </div>
           <span class="muted" style="white-space: nowrap">
             {{ new Date(item.createdAt).toLocaleString("zh-CN") }}

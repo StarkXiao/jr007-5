@@ -36,7 +36,7 @@ cd frontend && npm run dev    # http://localhost:5173
 ## 验证
 
 ```bash
-cd backend && npm run typecheck && npm test   # 31 个单元测试 + 20 个集成测试
+cd backend && npm run typecheck && npm test   # 31 个单元测试 + 30 个集成测试
 cd frontend && npm run typecheck && npm run build
 ```
 
@@ -91,4 +91,5 @@ frontend/   Vue3 应用：地图、条目编辑、审核台、模糊工作台、
 - **审核任务的领取锁用一条带条件的 UPDATE 实现**，而不是"先查再改"，后者在并发下必然出现两个人拿到同一任务。
 - **马赛克降采样用 cubic 而不是 nearest**：点采样会把某个原始像素的颜色原样保留，等于没打散信息。
 - **队列不可用时降级为同步处理**：Redis 宕机时图片若一直停在 `processing`，用户会以为上传失败而不停重试。
+- **通知按重要程度分级走三条通道**：站内信始终落库；邮件与浏览器推送（Web Push/VAPID）受通道开关 × 级别 × 静默时段共同约束。重要通知（驳回、申诉结果、评论被隐藏）静默期也立即发；普通通知延后到静默结束，由 worker 每 10 分钟补发；低级别通知（条目过期）聚合为一条摘要。决策逻辑集中在 `services/notifications/policy.ts`，站内通知中心按 `inapp_hidden` 过滤，未读数不受已关闭通道影响。
 - **原图保留 30 天后彻底删除**。代价是之后无法再调整模糊区域，此时只能下架整张图片——这是数据最小化必须付的成本。

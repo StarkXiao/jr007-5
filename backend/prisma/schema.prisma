@@ -116,6 +116,7 @@ model User {
   reportsFiled      Report[]           @relation("ReportReporter")
   reportsHandled    Report[]           @relation("ReportHandler")
   notifications     Notification[]
+  pushSubscriptions PushSubscription[]
   auditLogs         AuditLog[]
   reviewTasksLocked ReviewTask[]       @relation("ReviewAssignedTo")
   reviewTasksDecided ReviewTask[]      @relation("ReviewDecidedBy")
@@ -152,6 +153,12 @@ model UserSetting {
   defaultFuzzRadius Int      @default(50) @map("default_fuzz_radius") @db.SmallInt
   notifyEmail       Boolean  @default(true) @map("notify_email")
   notifyInapp       Boolean  @default(true) @map("notify_inapp")
+  notifyPush        Boolean  @default(false) @map("notify_push")
+  quietHoursEnabled Boolean  @default(false) @map("quiet_hours_enabled")
+  /** 静默开始/结束时刻，均为用户时区下的「自午夜起的分钟数」，0–1439 */
+  quietStart        Int      @default(1320) @map("quiet_start") @db.SmallInt
+  quietEnd          Int      @default(480) @map("quiet_end") @db.SmallInt
+  timezone          String   @default("Asia/Shanghai") @map("timezone") @db.VarChar(48)
   locale            String   @default("zh-CN") @db.VarChar(8)
   updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -437,17 +444,46 @@ model Notification {
   id        BigInt   @id @default(autoincrement())
   userId    BigInt   @map("user_id")
   type      String   @db.VarChar(32)
+  level     String   @default("normal") @db.VarChar(8)
   title     String   @db.VarChar(80)
   body      String?  @db.VarChar(300)
   payload   Json     @default("{}")
+  /** 决策时计划走的外部通道，如 {"email":true,"webpush":false}；补发时以此为准 */
+  channels  Json     @default("{}")
   readAt    DateTime? @map("read_at") @db.Timestamptz(6)
   emailSent Boolean  @default(false) @map("email_sent")
+  pushSent  Boolean  @default(false) @map("push_sent")
+  /** true 表示按用户设置不写入通知中心（仅外部通道或被静默消化） */
+  inappHidden Boolean @default(false) @map("inapp_hidden")
+  /** 外部通道计划投递时刻；null 表示立即投递或不走外部通道 */
+  deliverAt DateTime? @map("deliver_at") @db.Timestamptz(6)
+  /** 低级别通知被聚合进的摘要通知 */
+  digestId  BigInt?  @map("digest_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  digest Notification? @relation("NotificationDigest", fields: [digestId], references: [id], onDelete: SetNull)
+  members Notification[] @relation("NotificationDigest")
+
+  @@index([userId, readAt, createdAt], map: "idx_notify_user")
+  @@index([deliverAt], map: "idx_notify_deliver_at")
+  @@map("notifications")
+}
+
+model PushSubscription {
+  id        BigInt   @id @default(autoincrement())
+  userId    BigInt   @map("user_id")
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?  @map("user_agent") @db.VarChar(256)
+  lastErrorAt DateTime? @map("last_error_at") @db.Timestamptz(6)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, readAt, createdAt], map: "idx_notify_user")
-  @@map("notifications")
+  @@index([userId], map: "idx_push_sub_user")
+  @@map("push_subscriptions")
 }
 
 model AuditLog {

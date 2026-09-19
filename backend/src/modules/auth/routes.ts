@@ -104,14 +104,24 @@ authRouter.get(
         phone: true,
         createdAt: true,
         settings: {
-          select: { defaultFuzzRadius: true, notifyEmail: true, notifyInapp: true, locale: true },
+          select: {
+            defaultFuzzRadius: true,
+            notifyEmail: true,
+            notifyInapp: true,
+            notifyPush: true,
+            quietHoursEnabled: true,
+            quietStart: true,
+            quietEnd: true,
+            timezone: true,
+            locale: true,
+          },
         },
       },
     });
     if (!user) throw AppError.notFound("用户不存在");
 
     const unreadCount = await prisma.notification.count({
-      where: { userId: req.user!.id, readAt: null },
+      where: { userId: req.user!.id, readAt: null, inappHidden: false },
     });
 
     res.json(
@@ -130,6 +140,11 @@ authRouter.get(
             defaultFuzzRadius: 50,
             notifyEmail: true,
             notifyInapp: true,
+            notifyPush: false,
+            quietHoursEnabled: false,
+            quietStart: 1320,
+            quietEnd: 480,
+            timezone: "Asia/Shanghai",
             locale: "zh-CN",
           },
         },
