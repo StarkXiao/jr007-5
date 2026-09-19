@@ -60,6 +60,8 @@ export async function slaSweep(): Promise<{ overdueTasks: number; overdueReports
       await notify({
         userId: admin.id,
         type: "report_result",
+        // 工单超时属于需要立即介入的运维事件，覆盖类型默认级别
+        level: "important",
         title: "有工单已超过处理时限",
         body: `待处理超时：审核 ${overdueTasks.length} 条，举报 ${overdueReports.length} 条`,
         payload: { overdueTasks: overdueTasks.length, overdueReports: overdueReports.length },
@@ -184,16 +186,17 @@ export async function purgeOriginalImages(): Promise<{ purged: number }> {
   return { purged };
 }
 
-/** 日常清理：过期令牌、超期通知、失效的审核锁 */
+/** 日常清理：过期令牌、超期通知、失效的审核锁、失效的推送订阅 */
 export async function cleanup(): Promise<{
   tokens: number;
   notifications: number;
   locks: number;
   unmuted: number;
+  pushSubscriptions: number;
 }> {
   const now = new Date();
 
-  const [tokens, notifications, locks, unmuted] = await Promise.all([
+  const [tokens, notifications, locks, unmuted, pushSubscriptions] = await Promise.all([
     prisma.refreshToken.deleteMany({
       where: { OR: [{ expiresAt: { lt: now } }, { revokedAt: { lt: new Date(now.getTime() - 30 * MS_PER_DAY) } }] },
     }),
@@ -209,6 +212,8 @@ export async function cleanup(): Promise<{
       where: { status: "muted", mutedUntil: { lt: now } },
       data: { status: "active", mutedUntil: null },
     }),
+    // 推送服务返回 404/410 的订阅已不可能再送达，直接删除
+    prisma.pushSubscription.deleteMany({ where: { expired: true } }),
   ]);
 
   return {
@@ -216,5 +221,6 @@ export async function cleanup(): Promise<{
     notifications: notifications.count,
     locks: locks.count,
     unmuted: unmuted.count,
+    pushSubscriptions: pushSubscriptions.count,
   };
 }

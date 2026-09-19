@@ -87,14 +87,31 @@ export interface Comment {
   pendingModeration?: boolean;
 }
 
+export type NotificationLevel = "critical" | "important" | "normal" | "info";
+
 export interface NotificationItem {
   id: string;
   type: string;
+  level: NotificationLevel;
   title: string;
   body: string | null;
   payload: Record<string, unknown>;
   read: boolean;
   createdAt: string;
+}
+
+export interface NotificationSettings {
+  defaultFuzzRadius: number;
+  notifyEmail: boolean;
+  notifyInapp: boolean;
+  notifyPush: boolean;
+  emailMinLevel: NotificationLevel;
+  pushMinLevel: NotificationLevel;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string;
+  quietHoursEnd: string;
+  timeZone: string;
+  locale: string;
 }
 
 export interface CurrentUser {
@@ -107,12 +124,7 @@ export interface CurrentUser {
   email: string | null;
   phone: string | null;
   createdAt: string;
-  settings: {
-    defaultFuzzRadius: number;
-    notifyEmail: boolean;
-    notifyInapp: boolean;
-    locale: string;
-  };
+  settings: NotificationSettings;
 }
 
 export interface UploadedAsset {

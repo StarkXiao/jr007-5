@@ -67,9 +67,62 @@ export const NOTIFICATION_TYPES = {
   comment_hidden: "评论被隐藏",
   report_result: "举报处理结果",
   spot_stale: "条目信息可能已过期",
+  // 紧急通道：账号安全、隐私风险等需要立即知晓的事件
+  security_alert: "安全提醒",
 } as const;
 
 export type NotificationType = keyof typeof NOTIFICATION_TYPES;
+
+/**
+ * 事件重要程度分级。三条触达通道按级别决定走不走、是否受静默时段限制：
+ *
+ * - critical  紧急：安全/隐私类。三通道齐发，无视静默时段。
+ * - important 重要：需要用户尽快处理。邮件 + 浏览器推送，静默时段内暂缓。
+ * - normal    普通：日常回执。仅浏览器推送（加站内信），静默时段内暂缓。
+ * - info      提醒：可延后看到。只写站内信。
+ *
+ * 站内信始终入库，任何级别、任何开关都不影响——它是审计与对账的唯一可靠凭证。
+ */
+export const NOTIFICATION_LEVELS = ["critical", "important", "normal", "info"] as const;
+
+export type NotificationLevel = (typeof NOTIFICATION_LEVELS)[number];
+
+export const NOTIFICATION_LEVEL_LABELS: Record<NotificationLevel, string> = {
+  critical: "紧急",
+  important: "重要",
+  normal: "普通",
+  info: "提醒",
+};
+
+/**
+ * 各通知类型的默认级别。调用方仍可在 notify({ level }) 显式覆盖，
+ * 例如 SLA 超时提醒虽是 report_result 类型，对管理员而言应按 important 发。
+ */
+export const NOTIFICATION_LEVEL_BY_TYPE: Record<NotificationType, NotificationLevel> = {
+  security_alert: "critical",
+  review_rejected: "important",
+  review_changes: "important",
+  appeal_result: "important",
+  report_result: "important",
+  comment_hidden: "important",
+  review_approved: "normal",
+  comment_reply: "normal",
+  spot_stale: "normal",
+};
+
+/**
+ * 各通道默认接收的最低级别（含）。
+ * 邮件较重，默认从 important 起；浏览器推送即时且打扰小，normal 起即可。
+ */
+export const DEFAULT_CHANNEL_MIN_LEVEL: Record<NotifyChannel, NotificationLevel> = {
+  inapp: "info",
+  email: "important",
+  push: "normal",
+};
+
+export const NOTIFY_CHANNELS = ["inapp", "email", "push"] as const;
+
+export type NotifyChannel = (typeof NOTIFY_CHANNELS)[number];
 
 /**
  * 允许发布到地图的隐私状态。
@@ -84,6 +137,7 @@ export type PublishablePrivacyStatus = (typeof PUBLISHABLE_PRIVACY_STATUSES)[num
 export const QUEUE_NAMES = {
   IMAGE: "image",
   SLA: "sla",
+  NOTIFY: "notify",
 } as const;
 
 /** 所有队列共用的 Redis 键前缀，避免和同实例上的其他应用撞名 */

@@ -6,6 +6,7 @@ import { validate } from "../../middleware/validate";
 import { requireAuth } from "../../middleware/auth";
 import { prisma } from "../../db/prisma";
 import { serializeNotification } from "../shared/serialize";
+import { NOTIFICATION_LEVELS } from "../../config/constants";
 
 export const notificationsRouter = Router();
 
@@ -15,13 +16,23 @@ notificationsRouter.get(
   validate({
     query: z.object({
       unreadOnly: z.coerce.boolean().optional(),
+      level: z.enum(NOTIFICATION_LEVELS).optional(),
       page: z.coerce.number().int().min(1).default(1),
       pageSize: z.coerce.number().int().min(1).max(100).default(20),
     }),
   }),
   asyncHandler(async (req, res) => {
-    const query = req.query as unknown as { unreadOnly?: boolean; page: number; pageSize: number };
-    const where = { userId: req.user!.id, ...(query.unreadOnly ? { readAt: null } : {}) };
+    const query = req.query as unknown as {
+      unreadOnly?: boolean;
+      level?: (typeof NOTIFICATION_LEVELS)[number];
+      page: number;
+      pageSize: number;
+    };
+    const where = {
+      userId: req.user!.id,
+      ...(query.unreadOnly ? { readAt: null } : {}),
+      ...(query.level ? { level: query.level } : {}),
+    };
     const skip = (query.page - 1) * query.pageSize;
 
     const [items, total, unread] = await Promise.all([

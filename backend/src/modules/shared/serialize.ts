@@ -162,6 +162,7 @@ export function serializeComment(comment: CommentLike) {
 export function serializeNotification(notification: {
   id: bigint;
   type: string;
+  level: string;
   title: string;
   body: string | null;
   payload: unknown;
@@ -171,6 +172,7 @@ export function serializeNotification(notification: {
   return {
     id: notification.id,
     type: notification.type,
+    level: notification.level,
     title: notification.title,
     body: notification.body,
     payload: notification.payload ?? {},

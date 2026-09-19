@@ -19,6 +19,7 @@ onMounted(async () => {
 
   if (auth.isLoggedIn) {
     await notifications.load().catch(() => undefined);
+    notifications.startAutoSync();
   }
 });
 

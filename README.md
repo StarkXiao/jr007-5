@@ -36,7 +36,7 @@ cd frontend && npm run dev    # http://localhost:5173
 ## 验证
 
 ```bash
-cd backend && npm run typecheck && npm test   # 31 个单元测试 + 20 个集成测试
+cd backend && npm run typecheck && npm test   # 56 个单元测试 + 20 个集成测试
 cd frontend && npm run typecheck && npm run build
 ```
 
@@ -46,7 +46,7 @@ cd frontend && npm run typecheck && npm run build
 
 ### 已经实际跑过的验证
 
-- 后端构建、类型检查、51 个测试（含完整闭环与账号状态集成测试）全部通过
+- 后端构建、类型检查、56 个单元测试（含 25 个通知分级/静默时段/补发测试）全部通过；20 个集成测试需 `docker compose up -d postgres redis` 后运行
 - 前端类型检查与生产构建通过，并已拆包
 - `docker compose up -d --build` 整套栈拉起后四个容器均为 healthy
 - 图片上传 → 元数据清除 → 人工打码 → 隐私确认 → 随条目发布，逐环节用真实图片验证过：公开变体中 EXIF 与 GPS 均已消失
@@ -77,6 +77,22 @@ worker 不监听端口，因此它用 Redis 心跳探活（`node dist/scripts/wo
 4. **位置模糊化。** 对外只返回加了确定性偏移的坐标，偏移量由条目 UUID 派生，所以同一个地点每次显示位置一致，图上不会乱跳。
 
 人脸与车牌检测是**可选增强项**（`ENABLE_FACE_DETECTION` / `ENABLE_PLATE_DETECTION`，默认关闭，需要自行安装依赖与模型）。关闭时系统走人工框选 + 必须确认的路径，隐私门禁强度不变。
+
+## 通知是怎么分级送达的
+
+站内信、邮件、浏览器推送（Web Push）三条通道由同一个 `notify()` 入口分流，规则全部在用户设置里可调：
+
+1. **按事件重要程度分级**：`critical / important / normal / info`。站内信始终入库（审计凭证）；邮件默认只收重要以上，浏览器推送默认收普通以上，阈值用户可改。
+2. **静默时段**：用户配置自己时区下的静默窗口（支持跨午夜与夏令时），普通与重要通知暂缓——邮件在静默结束后**合并成一封摘要**补发，浏览器推送逐条补发。**紧急通知（安全、隐私类）无视静默**。
+3. **外部通道尽力而为**：邮件/推送走 BullMQ 异步队列，Redis 不可用时原地同步发送；每通道独立记录 `pending/deferred/sent/skipped/failed` 状态。
+
+浏览器推送需要 VAPID 密钥（不配则该通道自动禁用，其余不受影响）：
+
+```bash
+npx web-push generate-vapid-keys        # 把输出填入 VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY
+```
+
+前端 Service Worker 位于 `frontend/public/sw.js`（构建时原样拷到站点根目录，`nginx.conf` 已配置不缓存）。
 
 ## 目录
 

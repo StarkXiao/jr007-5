@@ -86,6 +86,15 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional().default(""),
   MAIL_FROM: z.string().default("no-reply@example.com"),
 
+  // 浏览器推送（Web Push / VAPID）。
+  // 密钥对用 `npx web-push generate-vapid-keys` 生成；
+  // 开发环境留空时推送通道会优雅降级（记日志后标记 skipped），不影响站内信与邮件。
+  VAPID_PUBLIC_KEY: z.string().optional().default(""),
+  VAPID_PRIVATE_KEY: z.string().optional().default(""),
+  VAPID_SUBJECT: z.string().default("mailto:no-reply@example.com"),
+  // 静默时段结束后补发通知的巡检间隔（分钟）
+  NOTIFY_FLUSH_INTERVAL_MIN: intFromEnv(5, 1, 1440),
+
   DAILY_SPOT_LIMIT: intFromEnv(20, 1, 1000),
   DAILY_COMMENT_LIMIT: intFromEnv(30, 1, 1000),
   REVIEW_SLA_HOURS: intFromEnv(24, 1, 720),

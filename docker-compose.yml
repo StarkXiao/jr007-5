@@ -57,6 +57,10 @@ services:
       STORAGE_PRIVATE_DIR: /app/storage/private
       MAIL_DRIVER: console
       GEOCODING_PROVIDER: nominatim
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:no-reply@example.com}
+      NOTIFY_FLUSH_INTERVAL_MIN: ${NOTIFY_FLUSH_INTERVAL_MIN:-5}
     ports:
       - "3000:3000"
     volumes:
@@ -83,6 +87,10 @@ services:
       STORAGE_PUBLIC_DIR: /app/storage/public
       STORAGE_PRIVATE_DIR: /app/storage/private
       MAIL_DRIVER: console
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:no-reply@example.com}
+      NOTIFY_FLUSH_INTERVAL_MIN: ${NOTIFY_FLUSH_INTERVAL_MIN:-5}
     volumes:
       - psdm_storage:/app/storage
     command: node dist/worker.js

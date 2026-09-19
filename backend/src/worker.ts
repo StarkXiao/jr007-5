@@ -1,14 +1,18 @@
 import { Worker, type Job } from "bullmq";
 import { QUEUE_NAMES, QUEUE_PREFIX, WORKER_HEARTBEAT_KEY } from "./config/constants";
+import { env } from "./config/env";
 import { createBullConnection } from "./db/redis";
 import {
   getImageQueue,
   getSweepQueue,
+  getNotifyQueue,
   type ImageJobData,
   type SweepJobData,
+  type NotifyJobData,
 } from "./services/queue";
 import { processAsset } from "./modules/media/service";
 import { cleanup, purgeOriginalImages, slaSweep, staleSweep } from "./jobs";
+import { deliverNotification, flushDeferredNotifications } from "./services/notify";
 import { initStorage } from "./services/storage";
 import { disconnectPrisma } from "./db/prisma";
 import { closeRedis, redis } from "./db/redis";
@@ -22,6 +26,13 @@ const SCHEDULES: Array<{ task: SweepJobData["task"]; pattern: string; label: str
   { task: "stale-sweep", pattern: "20 3 * * *", label: "每天 03:20：新鲜度巡检" },
   { task: "purge-originals", pattern: "40 3 * * *", label: "每天 03:40：清理超期原图" },
   { task: "cleanup", pattern: "0 4 * * *", label: "每天 04:00：清理过期令牌与通知" },
+  // 静默时段结束补发。间隔取配置（默认 5 分钟），意味着用户最晚在静默结束后
+  // 5 分钟内收到摘要；这是"不吵"与"别太晚"之间的折中。
+  {
+    task: "flush-deferred",
+    pattern: `*/${env.NOTIFY_FLUSH_INTERVAL_MIN} * * * *`,
+    label: `每 ${env.NOTIFY_FLUSH_INTERVAL_MIN} 分钟：补发静默时段暂缓通知`,
+  },
 ];
 
 async function runSweep(task: SweepJobData["task"]) {
@@ -34,6 +45,8 @@ async function runSweep(task: SweepJobData["task"]) {
       return purgeOriginalImages();
     case "cleanup":
       return cleanup();
+    case "flush-deferred":
+      return flushDeferredNotifications();
     default:
       throw new Error(`未知的定时任务：${task}`);
   }
@@ -80,6 +93,23 @@ async function bootstrap(): Promise<void> {
     logger.error({ task: job?.data.task, err: error.message }, "定时任务执行失败");
   });
 
+  const notifyWorker = new Worker<NotifyJobData>(
+    QUEUE_NAMES.NOTIFY,
+    async (job: Job<NotifyJobData>) => {
+      const result = await deliverNotification(job.data.notificationId);
+      logger.info({ notificationId: job.data.notificationId, result }, "通知外部通道投递完成");
+      return result;
+    },
+    { connection: createBullConnection(), concurrency: 5, prefix: QUEUE_PREFIX },
+  );
+
+  notifyWorker.on("failed", (job, error) => {
+    logger.error(
+      { notificationId: job?.data.notificationId, attempts: job?.attemptsMade, err: error.message },
+      "通知投递失败",
+    );
+  });
+
   const queue = getSweepQueue();
   for (const schedule of SCHEDULES) {
     await queue.upsertJobScheduler(
@@ -114,8 +144,10 @@ async function bootstrap(): Promise<void> {
 
     await imageWorker.close();
     await sweepWorker.close();
+    await notifyWorker.close();
     await getImageQueue().close().catch(() => undefined);
     await queue.close().catch(() => undefined);
+    await getNotifyQueue().close().catch(() => undefined);
     await closeRedis();
     await disconnectPrisma();
     clearTimeout(timer);

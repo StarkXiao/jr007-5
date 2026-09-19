@@ -3,9 +3,10 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "@/api/client";
-import type { Paged, Spot } from "@/api/types";
+import type { Paged, Spot, NotificationLevel, NotificationSettings } from "@/api/types";
 import { useAuthStore } from "@/stores/auth";
 import { useCatalogStore } from "@/stores/catalog";
+import { disablePush, enablePush, getPushAvailability } from "@/services/push";
 
 const auth = useAuthStore();
 const catalog = useCatalogStore();
@@ -17,8 +18,62 @@ const favorites = ref<Spot[]>([]);
 const statusFilter = ref<string>("");
 const loading = ref(false);
 
-const settings = ref({ defaultFuzzRadius: 50, notifyEmail: true, notifyInapp: true });
+const DEFAULT_SETTINGS: NotificationSettings = {
+  defaultFuzzRadius: 50,
+  notifyEmail: true,
+  notifyInapp: true,
+  notifyPush: false,
+  emailMinLevel: "important",
+  pushMinLevel: "normal",
+  quietHoursEnabled: false,
+  quietHoursStart: "22:00",
+  quietHoursEnd: "08:00",
+  timeZone: "Asia/Shanghai",
+  locale: "zh-CN",
+};
+
+const settings = ref<NotificationSettings>({ ...DEFAULT_SETTINGS });
 const passwordForm = ref({ currentPassword: "", newPassword: "" });
+
+// 浏览器推送可用性：不支持的浏览器 / 服务端未配 VAPID 时，开关不可点
+const pushSupported = ref(true);
+const pushConfigured = ref(false);
+const pushBusy = ref(false);
+
+const LEVEL_OPTIONS: Array<{ value: NotificationLevel; label: string; hint: string }> = [
+  { value: "critical", label: "仅紧急", hint: "安全提醒、隐私风险" },
+  { value: "important", label: "重要以上", hint: "含审核结果、申诉与处置" },
+  { value: "normal", label: "普通以上", hint: "含被回复、审核通过" },
+  { value: "info", label: "全部提醒", hint: "含所有系统通知" },
+];
+
+const TIMEZONE_OPTIONS = [
+  "Asia/Shanghai",
+  "Asia/Hong_Kong",
+  "Asia/Tokyo",
+  "Asia/Singapore",
+  "Europe/London",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Los_Angeles",
+  "Australia/Sydney",
+  "UTC",
+];
+
+/** 展示某时区相对 UTC 的当前偏移（DST 期间会自然变化） */
+function timezoneOffsetLabel(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: "shortOffset",
+    }).formatToParts(new Date());
+    const name = parts.find((part) => part.type === "timeZoneName")?.value ?? "";
+    // name 形如 GMT+8 / GMT-5 / GMT，归一化成 +08:00 风格成本高，直接展示原文
+    return name.replace("GMT", "").replace(/^([+-])(\d)$/, "$10$2:00") || "+00:00";
+  } catch {
+    return "";
+  }
+}
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "草稿",
@@ -62,8 +117,52 @@ async function loadFavorites() {
 }
 
 async function loadSettings() {
-  const result = await api.get<{ settings: typeof settings.value }>("/me/settings");
-  settings.value = result.settings;
+  const result = await api.get<{
+    settings: NotificationSettings;
+    push?: { configured: boolean; vapidPublicKey: string };
+  }>("/me/settings");
+  settings.value = { ...DEFAULT_SETTINGS, ...result.settings };
+  if (result.push) pushConfigured.value = result.push.configured;
+
+  const availability = await getPushAvailability();
+  pushSupported.value = availability.supported;
+  pushConfigured.value = availability.configured;
+}
+
+async function saveSettings() {
+  try {
+    const { defaultFuzzRadius, notifyEmail, notifyInapp, notifyPush, emailMinLevel, pushMinLevel,
+      quietHoursEnabled, quietHoursStart, quietHoursEnd, timeZone, locale } = settings.value;
+    const result = await api.patch<{ settings: NotificationSettings }>("/me/settings", {
+      defaultFuzzRadius, notifyEmail, notifyInapp, notifyPush, emailMinLevel, pushMinLevel,
+      quietHoursEnabled, quietHoursStart, quietHoursEnd, timeZone, locale,
+    });
+    settings.value = { ...DEFAULT_SETTINGS, ...result.settings };
+    ElMessage.success("设置已保存");
+  } catch (error) {
+    ElMessage.error((error as Error).message);
+  }
+}
+
+async function togglePush(nextEnabled: boolean) {
+  pushBusy.value = true;
+  try {
+    if (nextEnabled) {
+      await enablePush();
+      settings.value.notifyPush = true;
+      ElMessage.success("浏览器推送已开启");
+    } else {
+      await disablePush();
+      settings.value.notifyPush = false;
+      ElMessage.success("浏览器推送已关闭");
+    }
+  } catch (error) {
+    // 订阅失败（权限拒绝等）时把开关弹回去，并只保存其它已改设置
+    settings.value.notifyPush = !nextEnabled;
+    ElMessage.error((error as Error).message);
+  } finally {
+    pushBusy.value = false;
+  }
 }
 
 async function withdraw(uuid: string) {
@@ -98,15 +197,6 @@ async function requestManualReview(uuid: string) {
     await api.post(`/spots/${uuid}/request-manual-review`);
     ElMessage.success("已转人工复核");
     await loadContributions();
-  } catch (error) {
-    ElMessage.error((error as Error).message);
-  }
-}
-
-async function saveSettings() {
-  try {
-    await api.patch("/me/settings", settings.value);
-    ElMessage.success("设置已保存");
   } catch (error) {
     ElMessage.error((error as Error).message);
   }
@@ -222,6 +312,7 @@ onMounted(async () => {
 
       <el-tab-pane label="账号设置" name="settings">
         <el-card shadow="never">
+          <template #header>触达通道</template>
           <el-form label-position="top">
             <el-form-item label="默认位置模糊半径">
               <el-select v-model="settings.defaultFuzzRadius" style="width: 160px">
@@ -230,10 +321,98 @@ onMounted(async () => {
                 <el-option label="100 米" :value="100" />
               </el-select>
             </el-form-item>
-            <el-form-item label="通知方式">
-              <el-checkbox v-model="settings.notifyInapp">站内信</el-checkbox>
-              <el-checkbox v-model="settings.notifyEmail">邮件通知</el-checkbox>
+
+            <el-form-item label="站内信">
+              <el-switch v-model="settings.notifyInapp" active-text="在通知中心接收全部通知" />
+              <p class="muted" style="margin: 4px 0 0; font-size: 12px">
+                站内信始终作为凭证保留，关闭后仅影响入口提示，不影响通知实际入库。
+              </p>
             </el-form-item>
+
+            <el-form-item label="邮件">
+              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+                <el-switch v-model="settings.notifyEmail" />
+                <span class="muted">接收级别不低于</span>
+                <el-select v-model="settings.emailMinLevel" style="width: 150px">
+                  <el-option
+                    v-for="option in LEVEL_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </div>
+            </el-form-item>
+
+            <el-form-item label="浏览器推送">
+              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+                <el-switch
+                  :model-value="settings.notifyPush"
+                  :disabled="!pushSupported || !pushConfigured || pushBusy"
+                  @change="togglePush"
+                />
+                <span class="muted">接收级别不低于</span>
+                <el-select v-model="settings.pushMinLevel" style="width: 150px">
+                  <el-option
+                    v-for="option in LEVEL_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </div>
+              <p class="muted" style="margin: 4px 0 0; font-size: 12px">
+                <template v-if="!pushSupported">当前浏览器不支持系统通知（需要 HTTPS 或 localhost 环境）。</template>
+                <template v-else-if="!pushConfigured">站点尚未配置推送密钥，暂时无法开启。</template>
+                <template v-else>开启时浏览器会请求系统通知权限；关闭页面后仍能收到紧急与重要通知。</template>
+              </p>
+            </el-form-item>
+          </el-form>
+        </el-card>
+
+        <el-card shadow="never" style="margin-top: 12px">
+          <template #header>静默时段</template>
+          <el-form label-position="top">
+            <el-form-item>
+              <el-switch
+                v-model="settings.quietHoursEnabled"
+                active-text="在以下时段暂缓邮件与浏览器推送"
+              />
+            </el-form-item>
+            <el-form-item label="静默时间（按你所在时区的本地时间）">
+              <el-time-picker
+                v-model="settings.quietHoursStart"
+                format="HH:mm"
+                value-format="HH:mm"
+                :disabled="!settings.quietHoursEnabled"
+                placeholder="开始"
+                style="width: 120px"
+              />
+              <span style="margin: 0 8px">至</span>
+              <el-time-picker
+                v-model="settings.quietHoursEnd"
+                format="HH:mm"
+                value-format="HH:mm"
+                :disabled="!settings.quietHoursEnabled"
+                placeholder="结束"
+                style="width: 120px"
+              />
+              <span class="muted" style="margin-left: 12px">支持跨午夜，如 22:00 至次日 08:00</span>
+            </el-form-item>
+            <el-form-item label="所在时区">
+              <el-select v-model="settings.timeZone" filterable style="width: 240px">
+                <el-option
+                  v-for="tz in TIMEZONE_OPTIONS"
+                  :key="tz"
+                  :label="`${tz}（UTC${timezoneOffsetLabel(tz)}）`"
+                  :value="tz"
+                />
+              </el-select>
+            </el-form-item>
+            <p class="muted" style="font-size: 12px">
+              静默时段内仅站内信照常写入；普通与重要通知暂缓，静默结束后邮件合并为一封摘要补发，浏览器推送逐条补发。
+              <strong>紧急通知（如账号安全、隐私风险）不受静默限制。</strong>
+            </p>
             <el-button type="primary" @click="saveSettings">保存设置</el-button>
           </el-form>
         </el-card>

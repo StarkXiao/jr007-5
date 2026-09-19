@@ -116,6 +116,7 @@ model User {
   reportsFiled      Report[]           @relation("ReportReporter")
   reportsHandled    Report[]           @relation("ReportHandler")
   notifications     Notification[]
+  pushSubscriptions PushSubscription[]
   auditLogs         AuditLog[]
   reviewTasksLocked ReviewTask[]       @relation("ReviewAssignedTo")
   reviewTasksDecided ReviewTask[]      @relation("ReviewDecidedBy")
@@ -148,16 +149,47 @@ model RefreshToken {
 }
 
 model UserSetting {
-  userId            BigInt   @id @map("user_id")
-  defaultFuzzRadius Int      @default(50) @map("default_fuzz_radius") @db.SmallInt
-  notifyEmail       Boolean  @default(true) @map("notify_email")
-  notifyInapp       Boolean  @default(true) @map("notify_inapp")
-  locale            String   @default("zh-CN") @db.VarChar(8)
-  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  userId       BigInt  @id @map("user_id")
+  defaultFuzzRadius Int @default(50) @map("default_fuzz_radius") @db.SmallInt
+  notifyInapp  Boolean @default(true)  @map("notify_inapp")
+  notifyEmail  Boolean @default(true)  @map("notify_email")
+  notifyPush   Boolean @default(false) @map("notify_push")
+  // 各通道接收的最低重要级别（含），低于该级别的通知不走该通道
+  emailMinLevel String  @default("important") @map("email_min_level") @db.VarChar(16)
+  pushMinLevel  String  @default("normal") @map("push_min_level") @db.VarChar(16)
+  // 静默时段：本地时区下的 [HH:MM, HH:MM)，start=end 视为未启用
+  quietHoursEnabled Boolean @default(false) @map("quiet_hours_enabled")
+  quietHoursStart   String  @default("22:00") @map("quiet_hours_start") @db.Char(5)
+  quietHoursEnd     String  @default("08:00") @map("quiet_hours_end") @db.Char(5)
+  timeZone          String  @default("Asia/Shanghai") @map("time_zone") @db.VarChar(64)
+  locale       String  @default("zh-CN") @db.VarChar(8)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_settings")
+}
+
+/// 浏览器推送订阅（Web Push API / VAPID）。
+/// 同一浏览器的同一条订阅在订阅服务端有主键约束，endpointHash 去重即可。
+model PushSubscription {
+  id           BigInt   @id @default(autoincrement())
+  userId       BigInt   @map("user_id")
+  endpoint     String   @unique @db.VarChar(1024)
+  endpointHash String   @unique @map("endpoint_hash") @db.Char(64)
+  p256dh       String   @db.VarChar(255)
+  auth         String   @db.VarChar(255)
+  userAgent    String?  @map("user_agent") @db.VarChar(300)
+  // 推送服务返回 404/410 后置真，由清理任务删除，避免反复无效重试
+  expired      Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_push_sub_user")
+  @@index([expired], map: "idx_push_sub_expired")
+  @@map("push_subscriptions")
 }
 
 model Category {
@@ -433,20 +465,40 @@ model Report {
   @@map("reports")
 }
 
+enum NotificationDeliveryStatus {
+  // 已入队，等待外部通道投递（只可能出现在 email_status / push_status）
+  pending
+  // 静默时段暂缓，等待静默结束后补发
+  deferred
+  // 已投递（邮件已发出 / 推送已收到成功响应）
+  sent
+  // 无需发送（级别/开关未命中该通道）
+  skipped
+  // 重试耗尽仍失败，已记日志
+  failed
+}
+
 model Notification {
   id        BigInt   @id @default(autoincrement())
   userId    BigInt   @map("user_id")
   type      String   @db.VarChar(32)
+  level     String   @default("normal") @db.VarChar(16)
   title     String   @db.VarChar(80)
   body      String?  @db.VarChar(300)
   payload   Json     @default("{}")
   readAt    DateTime? @map("read_at") @db.Timestamptz(6)
-  emailSent Boolean  @default(false) @map("email_sent")
+  inappStatus    NotificationDeliveryStatus @default(skipped) @map("inapp_status")
+  emailStatus    NotificationDeliveryStatus @default(skipped) @map("email_status")
+  pushStatus     NotificationDeliveryStatus @default(skipped) @map("push_status")
+  deferredUntil  DateTime? @map("deferred_until") @db.Timestamptz(6)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt, createdAt], map: "idx_notify_user")
+  // 补发巡检：捞出静默时段到期、仍处于暂缓状态的通知
+  @@index([emailStatus, deferredUntil], map: "idx_notify_email_pending")
+  @@index([pushStatus, deferredUntil], map: "idx_notify_push_pending")
   @@map("notifications")
 }
 

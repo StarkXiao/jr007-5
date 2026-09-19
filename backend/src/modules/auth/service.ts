@@ -8,6 +8,7 @@ import { AppError } from "../../utils/errors";
 import { randomToken, sha256 } from "../../utils/crypto";
 import { signAccessToken } from "../../middleware/auth";
 import { verifyCaptcha } from "../../services/captcha";
+import { notify } from "../../services/notify";
 import { logger } from "../../utils/logger";
 import type { ChangePasswordInput, LoginInput, RegisterInput } from "./schemas";
 
@@ -316,4 +317,14 @@ export async function changePassword(
   });
 
   logger.info({ userId: userId.toString() }, "用户修改密码，其他会话已失效");
+
+  // 安全类事件按紧急级别通知：三通道齐发且不受静默时段限制。
+  // 用户本人改密时它是确认回执；若账号被盗，这是受害者唯一能立刻察觉的渠道。
+  await notify({
+    userId,
+    type: "security_alert",
+    title: "你的登录密码已修改",
+    body: "如果这不是你本人的操作，请尽快通过找回密码功能重置并检查账号活动。",
+    payload: { event: "password_changed" },
+  });
 }
